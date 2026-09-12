@@ -38,22 +38,13 @@ jobs:
             target: aarch64-unknown-linux-musl
             asset: wolfvoice-aarch64-linux-musl
             musl: true
-          # macOS and Windows are NOT built here, deliberately. Both are blocked on
-          # the same upstream knot in the opus crate, which vendors libopus and
-          # builds it with cmake:
-          #
-          #   * libopus declares cmake_minimum_required(VERSION 3.1), and CMake 4
-          #     — which those runner images now ship — refuses it outright:
-          #     "Compatibility with CMake < 3.5 has been removed from CMake."
-          #   * Pinning CMake 3.31 fixes that, but 3.31 does not know the
-          #     "Visual Studio 18 2026" generator on the current Windows image,
-          #     so Windows swaps one failure for another.
-          #
-          # A voice service runs on Linux in practice, so rather than ship a
-          # fragile workaround this is left to `cargo build --release` from source
-          # on those platforms, where the developer's own cmake is whatever works.
-          # Worth revisiting when the opus crate's vendored libopus updates its
-          # cmake_minimum_required.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: wolfvoice-x86_64-windows-msvc
+          # macOS is NOT built here yet. It hits the same cmake_minimum_required
+          # knot Windows used to (see CMAKE_POLICY_VERSION_MINIMUM below) and is
+          # presumably fixed by the same env var, but that is unverified — nobody
+          # has tried it on a macOS runner. Worth adding once someone confirms it.
 
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +74,17 @@ jobs:
           # Appending -lm alone changed nothing for exactly that reason; libc has
           # to come round a second time, after libopus.
           RUSTFLAGS: ${{ matrix.musl && '-C link-arg=-lm -C link-arg=-lc' || '' }}
+          # The opus crate vendors libopus and builds it via cmake, and libopus's
+          # CMakeLists.txt still declares `cmake_minimum_required(VERSION 3.1)`.
+          # CMake 4 — which windows-latest ships — refuses that outright
+          # ("Compatibility with CMake < 3.5 has been removed from CMake"). This
+          # is CMake's own documented escape hatch: treat the project as if it
+          # had declared at least this policy version, instead of hard-erroring.
+          # It's what let a local Windows build succeed with no other changes
+          # (a recent-enough cmake here also means the VS-generator name is
+          # recognized, so the two failures the old comment described turn out
+          # to have the same fix).
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Stage asset

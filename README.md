@@ -263,8 +263,23 @@ cargo build --release
 cargo test              # 31 tests, no network required
 ```
 
-Release binaries for Linux, macOS and Windows are built by GitHub Actions — see
-[.github/workflows/release.yml](.github/workflows/release.yml).
+**On Windows**, with a recent `cmake` (4.x) you also need:
+
+```powershell
+$env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+cargo build --release
+```
+
+libopus's vendored `CMakeLists.txt` still declares `cmake_minimum_required(VERSION
+3.1)`, which CMake 4 refuses outright ("Compatibility with CMake < 3.5 has been
+removed"). The env var above is CMake's own documented escape hatch — it configures
+libopus as if it had declared at least that policy version, instead of erroring. A
+new enough `cmake` to need this also recognizes current Visual Studio versions as a
+generator, so this is a complete fix, not a workaround for half the problem.
+
+Release binaries for Linux and Windows are built by GitHub Actions — see
+[.github/workflows/release.yml](.github/workflows/release.yml). macOS is not built
+there yet; the same fix likely applies but is unverified on that platform.
 
 ## Testing it without a viewer
 
