@@ -107,6 +107,17 @@ pub fn tether(listener: [f64; 3], avatar: [f64; 3]) -> [f64; 3] {
 /// The quaternion arrives as (x, y, z, w) — llvoicewebrtc.cpp:1231-1236 writes
 /// mListenerRot[0..3] in that order, and LLQuaternion stores x,y,z,w.
 fn world_to_local(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
+    // Firestorm sends quaternion components truncated to hundredths. Restore
+    // unit length before using the quaternion-vector rotation formula.
+    // Scale first so even very large finite components cannot overflow.
+    let scale = q.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+    let q = if q.iter().all(|x| x.is_finite()) && scale > 0.0 {
+        let scaled = q.map(|x| x / scale);
+        let norm = scaled.iter().map(|x| x * x).sum::<f64>().sqrt();
+        scaled.map(|x| x / norm)
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    };
     // Conjugate: negate the vector part.
     let (qx, qy, qz, qw) = (-q[0], -q[1], -q[2], q[3]);
     // Standard quaternion-vector rotation: v' = q * v * q^-1, expanded.
@@ -123,8 +134,10 @@ fn world_to_local(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
 /// Constant-power stereo pan weights (left, right) for a speaker heard by a
 /// listener at the given orientation.
 ///
-/// SL/OpenSim is Z-up with X east and Y north; the listener's local +X is "right"
-/// after rotating into its frame, so the lateral component drives the pan. We use
+/// SL/OpenSim is Z-up. The viewer listener frame is +X forward, +Y left,
+/// +Z up (LLCoordFrame::getAtAxis/getLeftAxis/getUpAxis). Thus local -Y is right.
+/// Include elevation in the direction length so a source overhead stays centred.
+/// We use
 /// the constant-power (sin/cos) law so a source moving across the front does not
 /// change apparent loudness.
 pub fn pan_weights(speaker_world: [f64; 3], listener_pos: [f64; 3], listener_rot: [f64; 4]) -> (f32, f32) {
@@ -134,9 +147,9 @@ pub fn pan_weights(speaker_world: [f64; 3], listener_pos: [f64; 3], listener_rot
         speaker_world[2] - listener_pos[2],
     ];
     let local = world_to_local(rel, listener_rot);
-    let horiz = (local[0] * local[0] + local[1] * local[1]).sqrt();
-    // Directly on top of the listener: centre it rather than dividing by zero.
-    let lateral = if horiz < 1e-6 { 0.0 } else { local[0] / horiz };
+    let distance = local[0].hypot(local[1]).hypot(local[2]);
+    // A coincident speaker has no direction: centre it.
+    let lateral = if distance < 1e-6 { 0.0 } else { -local[1] / distance };
     // lateral is -1 (hard left) .. +1 (hard right); map to 0..PI/2.
     let angle = (lateral.clamp(-1.0, 1.0) + 1.0) * (std::f64::consts::FRAC_PI_4);
     (angle.cos() as f32, angle.sin() as f32)
@@ -218,14 +231,14 @@ mod tests {
     }
 
     #[test]
-    fn pan_puts_east_speaker_on_the_right_of_a_north_facing_listener() {
-        // Identity rotation: listener's local frame == world frame, local +X = right.
+    fn pan_uses_the_viewer_local_left_axis() {
+        // Identity rotation: +X forward, +Y left, -Y right.
         let ident = [0.0, 0.0, 0.0, 1.0];
-        let (l, r) = pan_weights([10.0, 0.0, 0.0], [0.0, 0.0, 0.0], ident);
-        assert!(r > l, "east should be louder on the right, got l={l} r={r}");
+        let (l, r) = pan_weights([0.0, -10.0, 0.0], [0.0, 0.0, 0.0], ident);
+        assert!(r > l, "local -Y should be louder on the right, got l={l} r={r}");
 
-        let (l, r) = pan_weights([-10.0, 0.0, 0.0], [0.0, 0.0, 0.0], ident);
-        assert!(l > r, "west should be louder on the left, got l={l} r={r}");
+        let (l, r) = pan_weights([0.0, 10.0, 0.0], [0.0, 0.0, 0.0], ident);
+        assert!(l > r, "local +Y should be louder on the left, got l={l} r={r}");
     }
 
     #[test]
@@ -241,7 +254,7 @@ mod tests {
     #[test]
     fn straight_ahead_is_centred() {
         let ident = [0.0, 0.0, 0.0, 1.0];
-        let (l, r) = pan_weights([0.0, 10.0, 0.0], [0.0, 0.0, 0.0], ident);
+        let (l, r) = pan_weights([10.0, 0.0, 0.0], [0.0, 0.0, 0.0], ident);
         assert!((l - r).abs() < 1e-5, "front should be centred, got l={l} r={r}");
     }
 

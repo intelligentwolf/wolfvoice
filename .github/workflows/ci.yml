@@ -15,6 +15,9 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Install native Opus dependency
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev pkg-config
+
       # The unit tests cover the two halves that need no network: the wire
       # protocol parsers, and the spatial mixer (including the per-listener
       # separation that is the whole point of the service).
